@@ -27,6 +27,9 @@ def build_parser():
     train.add_argument("--lr", type=float, help="AdamW 学习率，默认 1e-4")
     train.add_argument("--weight-decay", type=float, help="AdamW 权重衰减，默认 1e-4")
     train.add_argument("--seed", type=int, help="随机种子，默认 42")
+    train.add_argument("--pretrained", action="store_true", help="新训练使用 ViT-S/16 和 ResNet-18 的公开预训练权重")
+    train.add_argument("--vit-weights", type=Path, help="用于新训练的本地 timm ViT-S/16 权重，可覆盖公开权重来源")
+    train.add_argument("--resnet-weights", type=Path, help="用于新训练的本地 TorchVision ResNet-18 权重")
     train.add_argument("--weight-by-grade", action="store_true", default=None,
                        help="按训练集等级频次加权序数损失，续训沿用断点设置")
     train.add_argument("--resume", action="store_true", help="从输出目录的 last.pt 继续训练")
@@ -56,6 +59,11 @@ def main():
             parser.error("--weight-decay must be finite and nonnegative")
         if args.seed is not None and not 0 <= args.seed < 2**32:
             parser.error("--seed must be between 0 and 2^32-1")
+        if args.resume and (args.pretrained or args.vit_weights or args.resnet_weights):
+            parser.error("预训练初始化仅用于新训练，续训时请使用 --resume 读取 last.pt")
+        for path in (args.vit_weights, args.resnet_weights):
+            if path is not None and not path.is_file():
+                parser.error(f"找不到本地预训练权重 {path}")
     elif args.output is not None:
         suffix = ".json" if args.command == "evaluate" else ".csv"
         if args.output.suffix.lower() != suffix:

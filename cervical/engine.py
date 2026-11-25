@@ -189,7 +189,19 @@ def _fit(args, directory, partitions, device):
         raise ValueError("resume requires last.pt and the same image/grade/patient split assignments")
     settings = _training_settings(args, previous)
     torch.manual_seed(settings["seed"])
-    model = SchemeBClassifier().to(device)
+    if previous:
+        model = SchemeBClassifier()
+    else:
+        pretrained = getattr(args, "pretrained", False)
+        vit_weights = getattr(args, "vit_weights", None)
+        resnet_weights = getattr(args, "resnet_weights", None)
+        default_source = "ImageNet" if pretrained else "random"
+        print(f"initializing backbones: ViT={vit_weights or default_source} "
+              f"ResNet18={resnet_weights or default_source}", flush=True)
+        model = SchemeBClassifier(
+            pretrained=pretrained, vit_weights=vit_weights, resnet_weights=resnet_weights,
+        )
+    model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=settings["lr"], weight_decay=settings["weight_decay"])
     history = []
     if previous:

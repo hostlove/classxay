@@ -1,26 +1,38 @@
 """Scheme B: source-aligned local features, global ViT, and one ordinal head."""
 
 import math
+from pathlib import Path
 
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchvision.models import resnet18
+from torchvision.models import ResNet18_Weights, resnet18
 
 import timm
 from timm.data import resolve_model_data_config
+from timm.models import load_state_dict
+from timm.models.vision_transformer import checkpoint_filter_fn
 
 
 class GlobalFeatureViT(nn.Module):
     """Extract the 384-dimensional CLS token from the complete cervical ROI."""
 
-    def __init__(self, image_size=320):
+    def __init__(self, image_size=320, *, pretrained=False, weights_path=None):
         super().__init__()
         self.image_size = image_size
         self.encoder = timm.create_model(
             "vit_small_patch16_224.augreg_in21k_ft_in1k",
-            img_size=image_size, pretrained=False, num_classes=0,
+            img_size=image_size, pretrained=pretrained and weights_path is None, num_classes=0,
         )
+        if weights_path is not None:
+            weights_path = Path(weights_path)
+            if weights_path.suffix.lower() == ".npz":
+                self.encoder.load_pretrained(str(weights_path))
+            else:
+                state_dict = checkpoint_filter_fn(load_state_dict(weights_path, weights_only=True), self.encoder)
+                state_dict.pop("head.weight", None)
+                state_dict.pop("head.bias", None)
+                self.encoder.load_state_dict(state_dict, strict=True)
         config = resolve_model_data_config(self.encoder)
         self.register_buffer("mean", torch.tensor(config["mean"]).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(config["std"]).view(1, 3, 1, 1))
@@ -40,9 +52,13 @@ class LocalFeatureCNN(nn.Module):
     stride = 8
     offset = 0.5
 
-    def __init__(self):
+    def __init__(self, *, pretrained=False, weights_path=None):
         super().__init__()
-        resnet = resnet18(weights=None)
+        weights = ResNet18_Weights.DEFAULT if pretrained and weights_path is None else None
+        resnet = resnet18(weights=weights)
+        if weights_path is not None:
+            state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+            resnet.load_state_dict(state_dict, strict=True)
         self.encoder = nn.Sequential(
             resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool, resnet.layer1, resnet.layer2,
         )
@@ -205,10 +221,11 @@ class FeatureOrdinalHead(nn.Module):
 class SchemeBClassifier(nn.Module):
     """Jointly trainable classification branches; cropping itself is separate."""
 
-    def __init__(self, *, global_size=320, grid_size=128, mean_mode="spatial", dropout=0.1):
+    def __init__(self, *, global_size=320, grid_size=128, mean_mode="spatial", dropout=0.1,
+                 pretrained=False, vit_weights=None, resnet_weights=None):
         super().__init__()
-        self.global_vit = GlobalFeatureViT(global_size)
-        self.local_cnn = LocalFeatureCNN()
+        self.global_vit = GlobalFeatureViT(global_size, pretrained=pretrained, weights_path=vit_weights)
+        self.local_cnn = LocalFeatureCNN(pretrained=pretrained, weights_path=resnet_weights)
         self.grid_size = grid_size
         self.head = FeatureOrdinalHead(mean_mode=mean_mode, dropout=dropout)
 
