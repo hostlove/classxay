@@ -1,0 +1,10 @@
+# Use a matching torch/torchvision pair for the server's CPU or CUDA platform.
+torch>=2.1
+torchvision>=0.16
+Pillow>=9.1
+numpy
+scipy
+filelock>=3
+PyYAML
+huggingface_hub
+safetensors>=0.2
