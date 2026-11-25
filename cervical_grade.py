@@ -27,6 +27,8 @@ def build_parser():
     train.add_argument("--lr", type=float, help="AdamW 学习率，默认 1e-4")
     train.add_argument("--weight-decay", type=float, help="AdamW 权重衰减，默认 1e-4")
     train.add_argument("--seed", type=int, help="随机种子，默认 42")
+    train.add_argument("--weight-by-grade", action="store_true", default=None,
+                       help="按训练集等级频次加权序数损失，续训沿用断点设置")
     train.add_argument("--resume", action="store_true", help="从输出目录的 last.pt 继续训练")
     evaluate.add_argument("--split-csv", type=Path, help="与训练相同格式的患者分区表")
     evaluate.add_argument("--split", choices=("val", "test"), default="val")

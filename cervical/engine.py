@@ -19,7 +19,7 @@ from .model import SchemeBClassifier, ordinal_logits_loss
 
 
 FORMAT = "cervical-scheme-b-v1"
-TRAIN_DEFAULTS = {"batch_size": 2, "lr": 1e-4, "weight_decay": 1e-4, "seed": 42}
+TRAIN_DEFAULTS = {"batch_size": 2, "lr": 1e-4, "weight_decay": 1e-4, "seed": 42, "weight_by_grade": False}
 
 
 def select_device(name):
@@ -67,7 +67,7 @@ def _forward(model, batch, device):
     return model(**inputs)
 
 
-def run_epoch(model, loader, device, optimizer=None):
+def run_epoch(model, loader, device, optimizer=None, *, grade_weights=None):
     training = optimizer is not None
     model.train(training)
     confusion = torch.zeros(16, dtype=torch.long, device=device)
@@ -78,7 +78,7 @@ def run_epoch(model, loader, device, optimizer=None):
             if training:
                 optimizer.zero_grad(set_to_none=True)
             result = _forward(model, batch, device)
-            loss = ordinal_logits_loss(result["logits"], labels)
+            loss = ordinal_logits_loss(result["logits"], labels, grade_weights=grade_weights)
             if not torch.isfinite(loss):
                 raise FloatingPointError("non-finite ordinal loss")
             if training:
@@ -135,9 +135,11 @@ def _split_digest(partitions):
 
 
 def _training_settings(args, previous):
-    settings = previous["settings"] if previous else TRAIN_DEFAULTS.copy()
+    settings = TRAIN_DEFAULTS.copy()
+    if previous:
+        settings.update(previous["settings"])
     for key in TRAIN_DEFAULTS:
-        value = getattr(args, key)
+        value = getattr(args, key, None)
         if value is not None:
             if previous and settings[key] != value:
                 raise ValueError(f"--resume must keep the saved {key}={settings[key]}")
@@ -208,9 +210,17 @@ def _fit(args, directory, partitions, device):
     if "val" in partitions:
         val_loader = make_loader(partitions["val"], settings["batch_size"], args.workers, device)
     print(f"device={device}  output={directory}  grades={list(GRADE_NAMES)}", flush=True)
+    grade_weights = None
     for split, cases in partitions.items():
-        print(f"{split}: {len(cases)} images, counts={np.bincount([c.grade for c in cases], minlength=4).tolist()}",
-              flush=True)
+        counts = np.bincount([case.grade for case in cases], minlength=len(GRADE_NAMES))
+        print(f"{split}: {len(cases)} images, counts={counts.tolist()}", flush=True)
+        if split == "train" and settings["weight_by_grade"]:
+            train_counts = torch.from_numpy(counts).float()
+            factors = train_counts.clamp_min(1).rsqrt().masked_fill(train_counts == 0, 0)
+            average_weight = train_counts.dot(factors) / train_counts.sum()
+            grade_weights = factors / average_weight
+            print(f"train_grade_weights={grade_weights.tolist()}", flush=True)
+            grade_weights = grade_weights.to(device)
     if val_loader is None:
         print("train-only: training metrics only; no validation split or best checkpoint", flush=True)
 
@@ -218,7 +228,10 @@ def _fit(args, directory, partitions, device):
         epoch_seed = settings["seed"] + epoch
         torch.manual_seed(epoch_seed)
         generator.manual_seed(epoch_seed)
-        row = {"epoch": epoch, "train": run_epoch(model, train_loader, device, optimizer)}
+        row = {
+            "epoch": epoch,
+            "train": run_epoch(model, train_loader, device, optimizer, grade_weights=grade_weights),
+        }
         if val_loader is not None:
             row["val"] = run_epoch(model, val_loader, device)
         history.append(row)

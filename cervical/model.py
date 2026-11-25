@@ -227,14 +227,19 @@ class SchemeBClassifier(nn.Module):
         return result
 
 
-def ordinal_logits_loss(logits, labels):
-    """Unweighted image-level cumulative BCE; use raw logits, not probabilities."""
+def ordinal_logits_loss(logits, labels, *, grade_weights=None):
+    """Compute cumulative BCE with an optional weight for each true image grade."""
     if logits.ndim != 2 or logits.shape[1] != 3 or labels.shape != logits.shape[:1]:
         raise ValueError("expected logits [B, 3] and labels [B]")
     if labels.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
         raise ValueError("labels must be integer grades")
-    labels = labels.to(device=logits.device)
+    labels = labels.to(device=logits.device, dtype=torch.long)
     if ((labels < 0) | (labels > 3)).any():
         raise ValueError("grades must be in [0, 3]")
     targets = labels[:, None] >= torch.arange(1, 4, device=logits.device)
-    return F.binary_cross_entropy_with_logits(logits.float(), targets.float())
+    sample_weights = None
+    if grade_weights is not None:
+        if grade_weights.shape != (4,):
+            raise ValueError("grade_weights must contain one weight per grade")
+        sample_weights = grade_weights.to(device=logits.device, dtype=torch.float32)[labels].unsqueeze(1)
+    return F.binary_cross_entropy_with_logits(logits.float(), targets.float(), weight=sample_weights)

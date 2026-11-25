@@ -105,6 +105,15 @@ class OrdinalTests(unittest.TestCase):
             self.assertIsNotNone(tensor.grad)
             self.assertTrue(torch.isfinite(tensor.grad).all())
 
+    def test_grade_weights_scale_loss_even_for_one_image(self):
+        logits = torch.tensor([[0.5, -0.5, -1.5]])
+        grade_weights = torch.tensor([0.5, 1.0, 1.0, 2.0])
+        for grade in (0, 3):
+            labels = torch.tensor([grade], dtype=torch.uint8)
+            unweighted = ordinal_logits_loss(logits, labels)
+            weighted = ordinal_logits_loss(logits, labels, grade_weights=grade_weights)
+            torch.testing.assert_close(weighted, unweighted * grade_weights[grade])
+
     def test_ordinal_metrics_and_undefined_kappa(self):
         metrics = summarize(np.eye(4, dtype=int), 0.1)
         self.assertEqual((metrics["accuracy"], metrics["macro_f1"], metrics["mae"], metrics["qwk"]),
